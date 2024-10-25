@@ -22,27 +22,8 @@ import { WavRenderer } from '../utils/wav_renderer';
 import { X, Edit, Zap, ArrowUp, ArrowDown } from 'react-feather';
 import { Button } from '../components/button/Button';
 import { Toggle } from '../components/toggle/Toggle';
-import { Map } from '../components/Map';
 
 import './ConsolePage.scss';
-import { isJsxOpeningLikeElement } from 'typescript';
-
-/**
- * Type for result from get_weather() function call
- */
-interface Coordinates {
-  lat: number;
-  lng: number;
-  location?: string;
-  temperature?: {
-    value: number;
-    units: string;
-  };
-  wind_speed?: {
-    value: number;
-    units: string;
-  };
-}
 
 /**
  * Type for all event logs
@@ -107,8 +88,7 @@ export function ConsolePage() {
    * All of our variables for displaying application state
    * - items are all conversation items (dialog)
    * - realtimeEvents are event logs, which can be expanded
-   * - memoryKv is for set_memory() function
-   * - coords, marker are for get_weather() function
+   * - collectedData is for storing data collected by Ania
    */
   const [items, setItems] = useState<ItemType[]>([]);
   const [realtimeEvents, setRealtimeEvents] = useState<RealtimeEvent[]>([]);
@@ -118,12 +98,9 @@ export function ConsolePage() {
   const [isConnected, setIsConnected] = useState(false);
   const [canPushToTalk, setCanPushToTalk] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
-  const [memoryKv, setMemoryKv] = useState<{ [key: string]: any }>({});
-  const [coords, setCoords] = useState<Coordinates | null>({
-    lat: 37.775593,
-    lng: -122.418137,
-  });
-  const [marker, setMarker] = useState<Coordinates | null>(null);
+  const [collectedData, setCollectedData] = useState<{
+    [key: string]: any;
+  } | null>(null);
 
   /**
    * Utility for formatting the timing of logs
@@ -184,8 +161,7 @@ export function ConsolePage() {
     client.sendUserMessageContent([
       {
         type: `input_text`,
-        text: `Hello!`,
-        // text: `For testing purposes, I want you to list ten car brands. Number each item, e.g. "one (or whatever number you are one): the item name".`
+        text: `Halo`,
       },
     ]);
 
@@ -201,12 +177,6 @@ export function ConsolePage() {
     setIsConnected(false);
     setRealtimeEvents([]);
     setItems([]);
-    setMemoryKv({});
-    setCoords({
-      lat: 37.775593,
-      lng: -122.418137,
-    });
-    setMarker(null);
 
     const client = clientRef.current;
     client.disconnect();
@@ -378,80 +348,63 @@ export function ConsolePage() {
 
     // Set instructions
     client.updateSession({ instructions: instructions });
+    client.updateSession({ voice: 'shimmer' });
     // Set transcription, otherwise we don't get user transcriptions back
     client.updateSession({ input_audio_transcription: { model: 'whisper-1' } });
 
     // Add tools
+    // Dodaj funkcję 'zapiszDaneWJSON' do klienta
     client.addTool(
       {
-        name: 'set_memory',
-        description: 'Saves important data about the user into memory.',
-        parameters: {
-          type: 'object',
-          properties: {
-            key: {
-              type: 'string',
-              description:
-                'The key of the memory value. Always use lowercase and underscores, no other characters.',
-            },
-            value: {
-              type: 'string',
-              description: 'Value can be anything represented as a string',
-            },
-          },
-          required: ['key', 'value'],
-        },
-      },
-      async ({ key, value }: { [key: string]: any }) => {
-        setMemoryKv((memoryKv) => {
-          const newKv = { ...memoryKv };
-          newKv[key] = value;
-          return newKv;
-        });
-        return { ok: true };
-      }
-    );
-    client.addTool(
-      {
-        name: 'get_weather',
+        name: 'zapiszDaneWJSON',
         description:
-          'Retrieves the weather for a given lat, lng coordinate pair. Specify a label for the location.',
+          'Zapisuje zebrane dane klienta do pliku JSON w określonym formacie.',
         parameters: {
           type: 'object',
           properties: {
-            lat: {
-              type: 'number',
-              description: 'Latitude',
-            },
-            lng: {
-              type: 'number',
-              description: 'Longitude',
-            },
-            location: {
+            imie: { type: 'string', description: 'Imię klienta' },
+            nazwisko: { type: 'string', description: 'Nazwisko klienta' },
+            kwota: { type: 'string', description: 'Kwota kredytu' },
+            okres: { type: 'string', description: 'Okres spłaty kredytu' },
+            typ_dochodu: { type: 'string', description: 'Typ źródła dochodu' },
+            dochod_3_miesiace: {
               type: 'string',
-              description: 'Name of the location',
+              description: 'Wysokość dochodów z ostatnich trzech miesięcy',
+            },
+            opcjonalne_dodatkowe_informacje: {
+              type: 'string',
+              description: 'Opcjonalne dodatkowe informacje',
             },
           },
-          required: ['lat', 'lng', 'location'],
+          required: [
+            'imie',
+            'nazwisko',
+            'kwota',
+            'okres',
+            'typ_dochodu',
+            'dochod_3_miesiace',
+          ],
         },
       },
-      async ({ lat, lng, location }: { [key: string]: any }) => {
-        setMarker({ lat, lng, location });
-        setCoords({ lat, lng, location });
-        const result = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m`
-        );
-        const json = await result.json();
-        const temperature = {
-          value: json.current.temperature_2m as number,
-          units: json.current_units.temperature_2m as string,
-        };
-        const wind_speed = {
-          value: json.current.wind_speed_10m as number,
-          units: json.current_units.wind_speed_10m as string,
-        };
-        setMarker({ lat, lng, location, temperature, wind_speed });
-        return json;
+      async (data: { [key: string]: any }) => {
+        // Zapisz dane w stanie komponentu
+        setCollectedData(data);
+
+        // Opcjonalnie: zapisanie danych do pliku JSON i pobranie go
+        const jsonData = JSON.stringify(data, null, 2);
+        const blob = new Blob([jsonData], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+
+        // Tworzenie linku do pobrania pliku
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'dane_klienta.json';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        // Zwróć potwierdzenie wykonania funkcji
+        return { success: true };
       }
     );
 
@@ -691,40 +644,14 @@ export function ConsolePage() {
             />
           </div>
         </div>
-        <div className="content-right">
-          <div className="content-block map">
-            <div className="content-block-title">get_weather()</div>
-            <div className="content-block-title bottom">
-              {marker?.location || 'not yet retrieved'}
-              {!!marker?.temperature && (
-                <>
-                  <br />
-                  🌡️ {marker.temperature.value} {marker.temperature.units}
-                </>
-              )}
-              {!!marker?.wind_speed && (
-                <>
-                  {' '}
-                  🍃 {marker.wind_speed.value} {marker.wind_speed.units}
-                </>
-              )}
-            </div>
-            <div className="content-block-body full">
-              {coords && (
-                <Map
-                  center={[coords.lat, coords.lng]}
-                  location={coords.location}
-                />
-              )}
+        {collectedData && (
+          <div className="content-block dane-klienta">
+            <div className="content-block-title">Dane Klienta</div>
+            <div className="content-block-body">
+              <pre>{JSON.stringify(collectedData, null, 2)}</pre>
             </div>
           </div>
-          <div className="content-block kv">
-            <div className="content-block-title">set_memory()</div>
-            <div className="content-block-body content-kv">
-              {JSON.stringify(memoryKv, null, 2)}
-            </div>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
